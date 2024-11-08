@@ -1,0 +1,65 @@
+name: build
+
+on:
+  workflow_dispatch: 
+  push:
+    branches: [ main ]
+  schedule:
+    - cron: "5 0 * * *"
+  
+env:
+  CONTAINER_REGISTRY: ghcr.io
+  IMAGE_NAME: bootc-hackery
+  IMAGE_NAMESPACE: ${{ github.repository_owner }}
+  
+jobs:
+  build:
+    permissions:
+      packages: write
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Generate Tag
+      id: generate-tag
+      run: echo tag=$(date +%s) | tee "$GITHUB_OUTPUT"
+    
+    - name: Build Image
+      id: build-image
+      uses: redhat-actions/buildah-build@v2
+      with:
+        image: ${{ env.CONTAINER_REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ env.IMAGE_NAME }}
+        tags: ${{ steps.generate-tag.outputs.tag }}
+        build-args: |
+          CI_BUILD_URL=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          CI_BUILD_TRIGGER=${{ github.event_name }}
+          CI_BUILD_REF=${{ github.ref }}
+          CI_BUILD_SOURCE_COMMIT=${{ github.sha }}
+        dockerfiles: |
+          ./Dockerfile
+
+    - name: Log in to registry
+      uses: redhat-actions/podman-login@v1
+      with:
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+        registry: ${{ env.CONTAINER_REGISTRY }}
+
+    - name: Tag latest
+      run: |
+        podman tag \
+          ${{ env.CONTAINER_REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ env.IMAGE_NAME }}:${{ steps.generate-tag.outputs.tag }} \
+          ${{ env.CONTAINER_REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ env.IMAGE_NAME }}:latest
+
+    - name: Push to registry
+      uses: redhat-actions/push-to-registry@v2
+      with:
+        # e.g. "mynamespace/myimagename"
+        image: ${{ env.IMAGE_NAMESPACE }}/${{ env.IMAGE_NAME }}
+        # e.g. "latest"
+        tags: |
+          ${{ steps.build-image.outputs.tags }}
+          latest
+        # e.g. "ghcr.io"
+        registry: ${{ env.CONTAINER_REGISTRY }} 
